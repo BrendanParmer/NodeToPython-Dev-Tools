@@ -6,21 +6,17 @@ import re
 import string
 from typing import Dict, List, NamedTuple
 
+import types_utils
+
 class NTPNodeSetting(NamedTuple):
     name_: str
     type_: str
 
 mutex = Lock()
 nodes_dict : Dict[str, List[NTPNodeSetting]] = {}
-i = 0
 
 def process_node(node, section):
-    global i
     global nodes_dict
-
-    with mutex:
-        print(f"{i}: Processing node {node}")
-        i += 1
 
     attrs = section.find_all("dl", class_="py attribute")
     attr_list : List[NTPNodeSetting] = []
@@ -28,10 +24,10 @@ def process_node(node, section):
         name = attr.find("span", class_="sig-name descname").text
         
         type_text = attr.find("dd", class_="field-odd").text
-        type = type_text.strip().split()[0]
-        type = re.sub(r'[^A-Za-z\.]', '', type)
-
-        attr_list.append(NTPNodeSetting(name, type))
+        ntp_type = types_utils.get_NTP_type(type_text)
+        if ntp_type == "":
+            raise ValueError(f"{node}.{name}: Unexpected type string {type_text}")
+        attr_list.append(NTPNodeSetting(name, ntp_type))
     
     with mutex:
         nodes_dict[node] = attr_list
@@ -96,8 +92,8 @@ if __name__ == "__main__":
     get_subclasses(current, parent)
 
     sorted_nodes = dict(sorted(nodes_dict.items()))
+
     for node, attr_list in sorted_nodes.items():
-        print(node)
+        print('\033[1m' + node + '\033[0m')
         for attr in attr_list:
-            print(f"\t{attr.name_}: {attr.type_}")
-        print("")
+            print(f"\t{attr.name_}: {attr.type_.strip()}")
