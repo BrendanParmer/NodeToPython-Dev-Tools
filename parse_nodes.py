@@ -1,11 +1,40 @@
 import argparse
 from bs4 import BeautifulSoup
+from threading import Thread, Lock
 import os
 import re
-import threading
+import string
+from typing import Dict, List, NamedTuple
 
-def process_type(type: str):
-    return
+class NTPNodeSetting(NamedTuple):
+    name_: str
+    type_: str
+
+mutex = Lock()
+nodes_dict : Dict[str, List[NTPNodeSetting]] = {}
+i = 0
+
+def process_node(node, section):
+    global i
+    global nodes_dict
+
+    with mutex:
+        print(f"{i}: Processing node {node}")
+        i += 1
+
+    attrs = section.find_all("dl", class_="py attribute")
+    attr_list : List[NTPNodeSetting] = []
+    for attr in attrs:
+        name = attr.find("span", class_="sig-name descname").text
+        
+        type_text = attr.find("dd", class_="field-odd").text
+        type = type_text.strip().split()[0]
+        type = re.sub(r'[^A-Za-z\.]', '', type)
+
+        attr_list.append(NTPNodeSetting(name, type))
+    
+    with mutex:
+        nodes_dict[node] = attr_list
 
 def get_subclasses(current: str, parent: str) -> list[str]:
     current_path = os.path.join(root_path, f"bpy.types.{current}.html")
@@ -15,18 +44,19 @@ def get_subclasses(current: str, parent: str) -> list[str]:
 
     soup = BeautifulSoup(current_html, "html.parser")
 
-    section = soup.find_all(id=f"{current.lower()}-{parent.lower()}")
-    if not section:
+    sections = soup.find_all(id=f"{current.lower()}-{parent.lower()}")
+    if not sections:
         raise ValueError(f"{current}: Couldn't find main section")
 
-    paragraphs = section[0].find_all("p")
+    section = sections[0]
+    paragraphs = section.find_all("p")
     if len(paragraphs) < 2:
         raise ValueError(f"{current}: Couldn't find subclass section")
 
     subclasses_paragraph = paragraphs[1]
     if not subclasses_paragraph.text.strip().startswith("subclasses —"):
         # No subclasses for this type
-        process_type(current)
+        process_node(current, section)
         return
 
     subclass_anchors = subclasses_paragraph.find_all("a")
@@ -34,7 +64,7 @@ def get_subclasses(current: str, parent: str) -> list[str]:
         raise ValueError(f"{current} No anchors in subclasses paragraph")
 
     subclass_types = [anchor.get("title") for anchor in subclass_anchors]
-    threads = []
+    threads: List[Thread] = []
     for type in subclass_types:
         if not type:
             raise ValueError(f"{current} Type was invalid")
@@ -44,11 +74,9 @@ def get_subclasses(current: str, parent: str) -> list[str]:
         pure_type = is_matching.group(1)
         if (pure_type == "TextureNode"):
             # unsupported
-            return
+            continue
 
-        print(pure_type)
-
-        thread = threading.Thread(target=get_subclasses, args=(pure_type, current))
+        thread = Thread(target=get_subclasses, args=(pure_type, current))
         threads.append(thread)
         thread.start()
 
@@ -66,3 +94,10 @@ if __name__ == "__main__":
     parent = "Node"
 
     get_subclasses(current, parent)
+
+    sorted_nodes = dict(sorted(nodes_dict.items()))
+    for node, attr_list in sorted_nodes.items():
+        print(node)
+        for attr in attr_list:
+            print(f"\t{attr.name_}: {attr.type_}")
+        print("")
