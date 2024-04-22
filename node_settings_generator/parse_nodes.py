@@ -15,13 +15,19 @@ class NTPNodeSetting(NamedTuple):
 mutex = Lock()
 nodes_dict : Dict[str, List[NTPNodeSetting]] = {}
 
+version = (4, 1)
+
 def process_node(node, section):
     global nodes_dict
 
     attrs = section.find_all("dl", class_="py attribute")
     attr_list : List[NTPNodeSetting] = []
     for attr in attrs:
-        name = attr.find("span", class_="sig-name descname").text
+        if version < (4, 1):
+            tag = "code"
+        else:
+            tag = "span"
+        name = attr.find(tag, class_="sig-name descname").text
         
         type_text = attr.find("dd", class_="field-odd").text
         ntp_type = types_utils.get_NTP_type(type_text)
