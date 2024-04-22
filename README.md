@@ -2,16 +2,13 @@
 A repository hosting tools to automate and speed up some aspects of development for the Blender add-on [NodeToPython](https://github.com/BrendanParmer/NodeToPython).
 
 ## Node Settings Generator
-1. 
-```
-usage: parse_nodes.py [-h] site_path
+(Instructions may need adjusted depending on your operating system, especially Windows)
+1. Download the required `bpy` documentation from the Blender website by running
+    ```
+    python3 bpy_docs/download_docs.py
+    ```
 
-Auto-generate node settings based on the bpy API
-documentation
-
-positional arguments:
-  site_path   Path to the downloaded website
-
-options:
-  -h, --help  show this help message and exit
-```
+2. To create the node settings file, run
+    ```
+    python3 node_settings_generator/parse_nodes.py
+    ```
