@@ -8,6 +8,8 @@ doc_to_NTP_type_dict : Dict[str, str] = {
     "float" : "ST.FLOAT",
     "float array of 1" : "ST.VEC1",
     "float array of 2" : "ST.VEC2",
+    "float array of 3" : "ST.VEC3",
+    "float array of 4" : "ST.VEC4",
     "Image" : "ST.IMAGE",
     "int" : "ST.INT",
     "Mask" : "ST.MASK",

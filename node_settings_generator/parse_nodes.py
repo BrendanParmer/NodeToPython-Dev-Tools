@@ -1,3 +1,4 @@
+import argparse
 from bs4 import BeautifulSoup
 from threading import Thread, Lock
 import os
@@ -12,6 +13,8 @@ class NTPNodeSetting(NamedTuple):
 
 mutex = Lock()
 nodes_dict : Dict[str, Dict[NTPNodeSetting, List[Tuple[int, int]]]] = {}
+
+NTP_MIN_VERSION = (3, 0)
 
 def process_node(node: str, section, version: Tuple[int, int]):
     global nodes_dict
@@ -92,6 +95,9 @@ def get_subclasses(current: str, parent: str, root_path: str,
     for thread in threads:
         thread.join()
 
+def get_version_str(version: Tuple[int, int]) -> str:
+    return f"{version[0]}.{version[1]}"
+
 def process_bpy_version(version: Tuple[int, int]) -> None:
     print(f"Processing version {version[0]}.{version[1]}")
 
@@ -99,25 +105,44 @@ def process_bpy_version(version: Tuple[int, int]) -> None:
     parent = "Node"
 
     root_path = os.path.join(bpy_docs_path, 
-                             f"{version[0]}.{version[1]}/"
+                             f"{get_version_str(version)}/"
                              f"blender_python_reference_"
                              f"{version[0]}_{version[1]}")
 
     get_subclasses(current, parent, root_path, version)
 
+def generate_versions(max_version: Tuple[int, int]) -> List[Tuple[int, int]]:
+    BLENDER_3_MAX_VERSION = 6
+
+    versions = [(3, i) for i in range(0, BLENDER_3_MAX_VERSION + 1)]
+    versions += [(4, i) for i in range(0, max_version[1] + 1)]
+    
+    return versions
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('max_major_version', type=int, 
+                        help="Max major version (inclusive) of Blender to generate node settings for")
+    parser.add_argument('max_minor_version', type=int, 
+                        help="Max minor version (inclusive) of Blender to generate node settings for")
+    args = parser.parse_args()
+
     current_path = os.path.dirname(os.path.realpath(__file__))
     dev_tools_path = os.path.dirname(current_path)
     bpy_docs_path = os.path.join(dev_tools_path, "bpy_docs")
 
-    versions = [(3, i) for i in range(0, 7)]
-    versions += [(4, i) for i in range(0, 2)]
+    NTP_MAX_VERSION_INC = (args.max_major_version, args.max_minor_version)
+    max_version_path = os.path.join(bpy_docs_path, f"{get_version_str(NTP_MAX_VERSION_INC)}")
+    if not os.path.exists(max_version_path):
+        raise ValueError(f"Couldn't find documentation for version {get_version_str(NTP_MAX_VERSION_INC)}")
 
+    versions = generate_versions(NTP_MAX_VERSION_INC)
+    
     for version in versions:
         process_bpy_version(version)
 
-    #used for exclusive max version
-    versions.append((4, 2))
+    NTP_MAX_VERSION_EXC = (NTP_MAX_VERSION_INC[0], NTP_MAX_VERSION_INC[1] + 1)
+    versions.append(NTP_MAX_VERSION_EXC)
 
     sorted_nodes = dict(sorted(nodes_dict.items()))
 
@@ -126,8 +151,6 @@ if __name__ == "__main__":
         os.makedirs(output_dir_path)
 
     output_filepath = os.path.join(output_dir_path, "node_settings.py")
-
-
 
     with open(output_filepath, 'w') as file:
         print(f"Writing settings to {output_filepath}")
@@ -139,16 +162,21 @@ if __name__ == "__main__":
             file.write(f"\t\'{node}\' : [\n")
 
             for attr, attr_versions in attr_dict.items():
-                min_version = min(attr_versions)
+                attr_min_v = min(attr_versions)
 
-                inclusive_max_version = max(attr_versions)
-                inclusive_max_index = versions.index(inclusive_max_version)
-                exclusive_max_version = versions[inclusive_max_index + 1]
+                attr_max_v_inc = max(attr_versions)
+                attr_max_v_inc_idx = versions.index(attr_max_v_inc)
+                attr_max_v_exc = versions[attr_max_v_inc_idx + 1]
 
-                min_version_str = f"min_version=({min_version[0]}, {min_version[1]}, 0)"
-                max_version_str = f"max_version=({exclusive_max_version[0]}, {exclusive_max_version[1]}, 0)"
-                file.write(f"\t\tNTPNodeSetting(\"{attr.name_}\", {attr.type_}, "
-                           f"{min_version_str}, {max_version_str}),\n")
+                min_version_str = ""
+                if attr_min_v != NTP_MIN_VERSION:
+                    min_version_str = f", min_version=({attr_min_v[0]}, {attr_min_v[1]}, 0)"
+
+                max_version_str = ""
+                if attr_max_v_exc != NTP_MAX_VERSION_EXC:
+                    max_version_str = f", max_version=({attr_max_v_exc[0]}, {attr_max_v_exc[1]}, 0)"
+                file.write(f"\t\tNTPNodeSetting(\"{attr.name_}\", {attr.type_}"
+                           f"{min_version_str}{max_version_str}),\n")
             
             file.write("\t],\n\n")
 

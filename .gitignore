@@ -1,3 +1,4 @@
 __pycache__/
 bpy_docs/*/**
 output/
+.vscode/
