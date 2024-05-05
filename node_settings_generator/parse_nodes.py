@@ -12,9 +12,47 @@ class NTPNodeSetting(NamedTuple):
     type_: str
 
 mutex = Lock()
+log_mutex = Lock()
 nodes_dict : Dict[str, Dict[NTPNodeSetting, List[Tuple[int, int]]]] = {}
+types_dict : Dict[str, set[str]] = {}
+log_file = None
 
 NTP_MIN_VERSION = (3, 0)
+
+def process_attr(attr, section, node: str, version: Tuple[int, int]) -> None:
+    name_section = attr.find(["code", "span"], class_="sig-name descname")
+    
+    if not name_section:
+        raise ValueError(f"{version} {node}: Couldn't find name section in\n\t{section}")
+    name = name_section.text
+    
+    type_section = attr.find("dd", class_="field-odd")
+    if not type_section:
+        raise ValueError(f"{version} {node}.{name}: Couldn't find type section in\n\t{section}")
+    type_text = type_section.text
+
+    with mutex:
+        first_word = type_text.split()[0]
+        if first_word not in types_dict:
+            types_dict[first_word] = {type_text}
+        else:
+            types_dict[first_word].add(type_text)
+
+    ntp_type = types_utils.get_NTP_type(type_text)
+    if ntp_type == "":
+        raise ValueError(f"{version} {node}.{name}: Unexpected type string {type_text}")
+    elif ntp_type is None:
+        # Read-only attribute, don't add to attribute list
+        with log_mutex:
+            log_file.write(f"WARNING: {version} {node}.{name}'s type is being ignored:\n\t{type_text.strip()}\n")
+        return
+
+    ntp_setting = NTPNodeSetting(name, ntp_type)
+    with mutex:
+        if ntp_setting not in nodes_dict[node]:
+            nodes_dict[node][ntp_setting] = [version]
+        else:
+            nodes_dict[node][ntp_setting].append(version)
 
 def process_node(node: str, section, version: Tuple[int, int]):
     global nodes_dict
@@ -25,27 +63,11 @@ def process_node(node: str, section, version: Tuple[int, int]):
     attrs = section.find_all("dl", class_="py attribute")
 
     for attr in attrs:
-        name_section = attr.find(["code", "span"], class_="sig-name descname")
-        
-        if not name_section:
-            raise ValueError(f"{version} {node}: Couldn't find name section in\n\t{section}")
-        name = name_section.text
-        
-        type_section = attr.find("dd", class_="field-odd")
-        if not type_section:
-            raise ValueError(f"{version} {node}.{name}: Couldn't find type section in\n\t{section}")
-        type_text = type_section.text
+        process_attr(attr, section, node, version)
 
-        ntp_type = types_utils.get_NTP_type(type_text)
-        if ntp_type == "":
-            raise ValueError(f"{version} {node}.{name}: Unexpected type string {type_text}")
-
-        ntp_setting = NTPNodeSetting(name, ntp_type)
-        with mutex:
-            if ntp_setting not in nodes_dict[node]:
-                nodes_dict[node][ntp_setting] = [version]
-            else:
-                nodes_dict[node][ntp_setting].append(version)
+    datas = section.find_all("dl", class_="py data")
+    for data in datas:
+        process_attr(data, section, node, version)
 
 def get_subclasses(current: str, parent: str, root_path: str, 
                    version: Tuple[int, int]) -> list[str]:
@@ -137,7 +159,14 @@ if __name__ == "__main__":
         raise ValueError(f"Couldn't find documentation for version {get_version_str(NTP_MAX_VERSION_INC)}")
 
     versions = generate_versions(NTP_MAX_VERSION_INC)
-    
+
+    output_dir_path = os.path.join(current_path, "output")
+    if not os.path.exists(output_dir_path):
+        os.makedirs(output_dir_path)
+
+    log_filepath = os.path.join(output_dir_path, "log.txt")
+    log_file = open(log_filepath, 'w')
+
     for version in versions:
         process_bpy_version(version)
 
@@ -146,20 +175,20 @@ if __name__ == "__main__":
 
     sorted_nodes = dict(sorted(nodes_dict.items()))
 
-    output_dir_path = os.path.join(current_path, "output")
-    if not os.path.exists(output_dir_path):
-        os.makedirs(output_dir_path)
-
     output_filepath = os.path.join(output_dir_path, "node_settings.py")
 
     with open(output_filepath, 'w') as file:
         print(f"Writing settings to {output_filepath}")
 
-        file.write("from utils import ST, NTPNodeSetting\n\n")
+        file.write("from .utils import ST, NTPNodeSetting\n\n")
         file.write("node_settings : dict[str, list[NTPNodeSetting]] = {\n")
         
         for node, attr_dict in sorted_nodes.items():
-            file.write(f"\t\'{node}\' : [\n")
+            file.write(f"\t\'{node}\' : [")
+
+            attrs_exist = len(attr_dict.items()) > 0
+            if attrs_exist:
+                file.write("\n")
 
             for attr, attr_versions in attr_dict.items():
                 attr_min_v = min(attr_versions)
@@ -178,8 +207,17 @@ if __name__ == "__main__":
                 file.write(f"\t\tNTPNodeSetting(\"{attr.name_}\", {attr.type_}"
                            f"{min_version_str}{max_version_str}),\n")
             
-            file.write("\t],\n\n")
+            if attrs_exist:
+                file.write("\t")
+            file.write("],\n\n")
 
         file.write("}")
 
         print("Successfully finished")
+
+    sorted_types = dict(sorted(types_dict.items()))
+    log_file.write("\nTypes encountered:\n")
+    for key, value in types_dict.items():
+        log_file.write(f"{key}\n")
+        for string in value:
+            log_file.write(f"\t{string}\n")
