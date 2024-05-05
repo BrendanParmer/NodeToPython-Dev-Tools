@@ -3,7 +3,9 @@ from bs4 import BeautifulSoup
 from threading import Thread, Lock
 import os
 import re
+import time
 from typing import Dict, List, NamedTuple, Tuple
+import urllib.request
 
 import types_utils
 
@@ -69,9 +71,39 @@ def process_node(node: str, section, version: Tuple[int, int]):
     for data in datas:
         process_attr(data, section, node, version)
 
+def download_file(filepath: str, version: Tuple[int, int], local_path: str) -> bool:
+    file_url = f"https://docs.blender.org/api/{version[0]}.{version[1]}/{filepath}"
+
+    headers_ = {'User-Agent': 'Mozilla/5.0'}
+
+    req = urllib.request.Request(file_url, headers=headers_)
+
+    if not os.path.exists(os.path.dirname(local_path)):
+        os.makedirs(os.path.dirname(local_path))
+
+    while True:
+        try:
+            with urllib.request.urlopen(req) as response:
+                with open(local_path, 'wb') as file:
+                    file.write(response.read())
+                    break
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                time.sleep(1.0)
+            else:
+                raise
+
+    print(f"Downloaded {file_url} to {local_path}")
+    return True
+
+
 def get_subclasses(current: str, parent: str, root_path: str, 
                    version: Tuple[int, int]) -> list[str]:
-    current_path = os.path.join(root_path, f"bpy.types.{current}.html")
+    relative_path = f"bpy.types.{current}.html"
+    current_path = os.path.join(root_path, relative_path)
+
+    if not os.path.exists(current_path):
+        download_file(relative_path, version, current_path)
 
     with open(current_path, "r") as current_file:
         current_html = current_file.read()
@@ -127,9 +159,7 @@ def process_bpy_version(version: Tuple[int, int]) -> None:
     parent = "Node"
 
     root_path = os.path.join(bpy_docs_path, 
-                             f"{get_version_str(version)}/"
-                             f"blender_python_reference_"
-                             f"{version[0]}_{version[1]}")
+                             f"{get_version_str(version)}/")
 
     get_subclasses(current, parent, root_path, version)
 
@@ -155,8 +185,6 @@ if __name__ == "__main__":
 
     NTP_MAX_VERSION_INC = (args.max_major_version, args.max_minor_version)
     max_version_path = os.path.join(bpy_docs_path, f"{get_version_str(NTP_MAX_VERSION_INC)}")
-    if not os.path.exists(max_version_path):
-        raise ValueError(f"Couldn't find documentation for version {get_version_str(NTP_MAX_VERSION_INC)}")
 
     versions = generate_versions(NTP_MAX_VERSION_INC)
 
@@ -190,7 +218,8 @@ if __name__ == "__main__":
             if attrs_exist:
                 file.write("\n")
 
-            for attr, attr_versions in attr_dict.items():
+            sorted_attrs = dict(sorted(attr_dict.items()))
+            for attr, attr_versions in sorted_attrs.items():
                 attr_min_v = min(attr_versions)
 
                 attr_max_v_inc = max(attr_versions)
