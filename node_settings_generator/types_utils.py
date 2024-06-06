@@ -4,16 +4,18 @@ from typing import Dict
 READ_ONLY_TYPES = {
     "ST.BAKE_ITEMS",
     "ST.COLOR_RAMP",
+    "ST.CAPTURE_ATTRIBUTE_ITEMS",
     "ST.CRYPTOMATTE_ENTRIES",
     "ST.CURVE_MAPPING",
     "ST.ENUM_DEFINITION",
     "ST.FILE_SLOTS",
     "ST.IMAGE_FORMAT_SETTINGS",
     "ST.IMAGE_USER",
+    "ST.INDEX_SWITCH_ITEMS",
     "ST.LAYER_SLOTS",
+    "ST.MENU_SWITCH_ITEMS",
     "ST.REPEAT_OUTPUT_ITEMS",
     "ST.SIM_OUTPUT_ITEMS",
-    "ST.INDEX_SWITCH_ITEMS"
 } 
 
 doc_to_NTP_type_dict : Dict[str, str] = {
@@ -39,15 +41,19 @@ doc_to_NTP_type_dict : Dict[str, str] = {
     "Mask" : "ST.MASK",
     "Material" : "ST.MATERIAL",
     "mathutils.Color" : "ST.COLOR",
+    "mathutils.Euler" : "ST.EULER", #TODO
     "mathutils.Vector of 3" : "ST.VEC3",
     "MovieClip" : "ST.MOVIE_CLIP",
     "Node" : None, # (<4.2) Always used with zone inputs, need to make sure 
                    # output nodes exist. Handled separately from NTP attr system
     "NodeEnumDefinition" : "ST.ENUM_DEFINITION",
+    "NodeEnumItem" : "ST.ENUM_ITEM",
     "NodeGeometryBakeItems" : "ST.BAKE_ITEMS",
+    "NodeGeometryCaptureAttributeItems" : "ST.CAPTURE_ATTRIBUTE_ITEMS", #TODO
     "NodeGeometryRepeatOutputItems" : "ST.REPEAT_OUTPUT_ITEMS",
     "NodeGeometrySimulationOutputItems" : "ST.SIM_OUTPUT_ITEMS",
     "NodeIndexSwitchItems" : "ST.INDEX_SWITCH_ITEMS",
+    "NodeMenuSwitchItems" : "ST.MENU_SWITCH_ITEMS", #TODO
     "NodeTree" : "ST.NODE_TREE",
     "Object" : "ST.OBJECT",
     "ParticleSystem" : "ST.PARTICLE_SYSTEM",
