@@ -12,7 +12,10 @@ import types_utils
 
 class NTPNodeSetting(NamedTuple):
     name_: str
-    type_: str
+    type_: types_utils.ST
+
+    def __lt__(self, other):
+        return self.name_ < other.name_
 
 class Version(NamedTuple):
     major_: int
@@ -56,9 +59,7 @@ def process_attr(attr, section, node: str, version: Version) -> None:
             types_dict[first_word].add(type_text)
 
     ntp_type = types_utils.get_NTP_type(type_text)
-    if ntp_type == "":
-        raise ValueError(f"{version.tuple_str()} {node}.{name}: Unexpected type string {type_text}")
-    elif ntp_type is None:
+    if ntp_type is None:
         # Read-only attribute, don't add to attribute list
         with log_mutex:
             log_file.write(f"WARNING: {version.tuple_str()} {node}.{name}'s type is being ignored:\n\t{type_text.strip()}\n")
@@ -174,12 +175,17 @@ def process_bpy_version(version: Version) -> None:
 
     get_subclasses(current, parent, root_path, version)
 
-def generate_versions(max_version: Version) -> list[Version]:
+def generate_versions(max_version_inc: Version) -> list[Version]:
     BLENDER_3_MAX_VERSION = 6
 
     versions = [Version(3, i) for i in range(0, BLENDER_3_MAX_VERSION + 1)]
-    versions += [Version(4, i) for i in range(0, max_version[1] + 1)]
+    versions += [Version(4, i) for i in range(0, max_version_inc[1] + 1)]
     
+    #lazy max version check
+    for version in versions[::-1]:
+        if version > max_version_inc:
+            versions.remove(version)
+
     return versions
 
 def subminor(version: Version) -> tuple:
@@ -203,6 +209,28 @@ def get_max_version(versions: list[Version], blender_versions: list[Version]
         return max_v_exclusive
     else:
         return None
+
+def write_imports(file: TextIOWrapper):
+    file.write("from enum import Enum, auto\n")
+    file.write("from typing import NamedTuple\n")
+    file.write("\n")
+
+def write_st_enum(file: TextIOWrapper):
+    file.write("class ST(Enum):\n")
+    file.write("\t\"\"\"\n\tSettings Types\n\t\"\"\"\n")
+
+    for setting_type in types_utils.ST:
+        file.write(f"\t{setting_type.name} = auto()\n")
+    
+    file.write("\n")
+
+def write_ntp_node_setting_class(file: TextIOWrapper):
+    file.write("class NTPNodeSetting(NamedTuple):\n")
+    file.write("\tname_: str\n")
+    file.write("\tst_: ST\n")
+    file.write(f"\tmin_version_: tuple = {subminor(NTP_MIN_VERSION)}\n")
+    file.write(f"\tmax_version_: tuple = {subminor(NTP_MAX_VERSION_EXC)}\n")
+    file.write("\n")
 
 def write_node_info_class(file: TextIOWrapper):
     file.write("class NodeInfo():\n")
@@ -230,7 +258,7 @@ def write_ntp_node_settings(node_info: NodeInfo, file: TextIOWrapper,
         if attr_max_version != None and attr_max_version != node_max_v:
             max_version_str = f", max_version={subminor(attr_max_version)}"
 
-        file.write(f"\t\t\tNTPNodeSetting(\"{attr.name_}\", {attr.type_}"
+        file.write(f"\t\t\tNTPNodeSetting(\"{attr.name_}\", ST.{attr.type_.name}"
                     f"{min_version_str}{max_version_str}),\n")
 
     if attrs_exist:
@@ -289,7 +317,11 @@ if __name__ == "__main__":
     with open(output_filepath, 'w') as file:
         print(f"Writing settings to {output_filepath}")
 
-        file.write("from .utils import ST, NTPNodeSetting\n\n")
+        write_imports(file)
+
+        write_st_enum(file)
+
+        write_ntp_node_setting_class(file)
        
         write_node_info_class(file)
 
