@@ -1,36 +1,54 @@
 import argparse
 from bs4 import BeautifulSoup
 from threading import Thread, Lock
+from io import TextIOWrapper
 import os
 import re
 import time
-from typing import Dict, List, NamedTuple, Tuple
+from typing import NamedTuple
 import urllib.request
 
 import types_utils
 
 class NTPNodeSetting(NamedTuple):
     name_: str
-    type_: str
+    type_: types_utils.ST
+
+    def __lt__(self, other):
+        return self.name_ < other.name_
+
+class Version(NamedTuple):
+    major_: int
+    minor_: int
+
+    def tuple_str(self) -> str:
+        return f"({self.major_}, {self.minor_})"
+
+    def point_str(self) -> str:
+        return f"{self.major_}.{self.minor_}"
+
+class NodeInfo(NamedTuple):
+    versions_: list[Version]
+    attributes_: dict[NTPNodeSetting, list[Version]]
 
 mutex = Lock()
 log_mutex = Lock()
-nodes_dict : Dict[str, Dict[NTPNodeSetting, List[Tuple[int, int]]]] = {}
-types_dict : Dict[str, set[str]] = {}
+nodes_dict : dict[str, NodeInfo] = {}
+types_dict : dict[str, set[str]] = {}
 log_file = None
 
 NTP_MIN_VERSION = (3, 0)
 
-def process_attr(attr, section, node: str, version: Tuple[int, int]) -> None:
+def process_attr(attr, section, node: str, version: Version) -> None:
     name_section = attr.find(["code", "span"], class_="sig-name descname")
     
     if not name_section:
-        raise ValueError(f"{version} {node}: Couldn't find name section in\n\t{section}")
+        raise ValueError(f"{version.tuple_str()} {node}: Couldn't find name section in\n\t{section}")
     name = name_section.text
     
     type_section = attr.find("dd", class_="field-odd")
     if not type_section:
-        raise ValueError(f"{version} {node}.{name}: Couldn't find type section in\n\t{section}")
+        raise ValueError(f"{version.tuple_str()} {node}.{name}: Couldn't find type section in\n\t{section}")
     type_text = type_section.text
 
     with mutex:
@@ -41,26 +59,24 @@ def process_attr(attr, section, node: str, version: Tuple[int, int]) -> None:
             types_dict[first_word].add(type_text)
 
     ntp_type = types_utils.get_NTP_type(type_text)
-    if ntp_type == "":
-        raise ValueError(f"{version} {node}.{name}: Unexpected type string {type_text}")
-    elif ntp_type is None:
+    if ntp_type is None:
         # Read-only attribute, don't add to attribute list
         with log_mutex:
-            log_file.write(f"WARNING: {version} {node}.{name}'s type is being ignored:\n\t{type_text.strip()}\n")
+            log_file.write(f"WARNING: {version.tuple_str()} {node}.{name}'s type is being ignored:\n\t{type_text.strip()}\n")
         return
 
     ntp_setting = NTPNodeSetting(name, ntp_type)
     with mutex:
-        if ntp_setting not in nodes_dict[node]:
-            nodes_dict[node][ntp_setting] = [version]
-        else:
-            nodes_dict[node][ntp_setting].append(version)
+        if ntp_setting not in nodes_dict[node].attributes_:
+            nodes_dict[node].attributes_[ntp_setting] = []
+        nodes_dict[node].attributes_[ntp_setting].append(version)
 
-def process_node(node: str, section, version: Tuple[int, int]):
+def process_node(node: str, section, version: Version):
     global nodes_dict
     with mutex:
         if node not in nodes_dict:
-            nodes_dict[node] = {}
+            nodes_dict[node] = NodeInfo([], {})
+        nodes_dict[node].versions_.append(version)
 
     attrs = section.find_all("dl", class_="py attribute")
 
@@ -71,8 +87,8 @@ def process_node(node: str, section, version: Tuple[int, int]):
     for data in datas:
         process_attr(data, section, node, version)
 
-def download_file(filepath: str, version: Tuple[int, int], local_path: str) -> bool:
-    file_url = f"https://docs.blender.org/api/{version[0]}.{version[1]}/{filepath}"
+def download_file(filepath: str, version: Version, local_path: str) -> bool:
+    file_url = f"https://docs.blender.org/api/{version.point_str()}/{filepath}"
 
     headers_ = {'User-Agent': 'Mozilla/5.0'}
 
@@ -98,7 +114,7 @@ def download_file(filepath: str, version: Tuple[int, int], local_path: str) -> b
 
 
 def get_subclasses(current: str, parent: str, root_path: str, 
-                   version: Tuple[int, int]) -> list[str]:
+                   version: Version) -> list[str]:
     relative_path = f"bpy.types.{current}.html"
     current_path = os.path.join(root_path, relative_path)
 
@@ -112,12 +128,12 @@ def get_subclasses(current: str, parent: str, root_path: str,
 
     sections = soup.find_all(id=f"{current.lower()}-{parent.lower()}")
     if not sections:
-        raise ValueError(f"{version} {current}: Couldn't find main section")
+        raise ValueError(f"{version.tuple_str()} {current}: Couldn't find main section")
 
     section = sections[0]
     paragraphs = section.find_all("p")
     if len(paragraphs) < 2:
-        raise ValueError(f"{version} {current}: Couldn't find subclass section")
+        raise ValueError(f"{version.tuple_str()} {current}: Couldn't find subclass section")
 
     subclasses_paragraph = paragraphs[1]
     if not subclasses_paragraph.text.strip().startswith("subclasses —"):
@@ -127,16 +143,16 @@ def get_subclasses(current: str, parent: str, root_path: str,
 
     subclass_anchors = subclasses_paragraph.find_all("a")
     if not subclass_anchors:
-        raise ValueError(f"{version} {current} No anchors in subclasses paragraph")
+        raise ValueError(f"{version.tuple_str()} {current} No anchors in subclasses paragraph")
 
     subclass_types = [anchor.get("title") for anchor in subclass_anchors]
-    threads: List[Thread] = []
+    threads: list[Thread] = []
     for type in subclass_types:
         if not type:
-            raise ValueError(f"{version} {current} Type was invalid")
+            raise ValueError(f"{version.tuple_str()} {current} Type was invalid")
         is_matching = re.match(r"bpy\.types\.(.*)", type)
         if not is_matching:
-            raise ValueError(f"{version} {current}: Type {type} was not of the form \"bpy.types.x\"")
+            raise ValueError(f"{version.tuple_str()} {current}: Type {type} was not of the form \"bpy.types.x\"")
         pure_type = is_matching.group(1)
         if (pure_type == "TextureNode"):
             # unsupported
@@ -149,27 +165,120 @@ def get_subclasses(current: str, parent: str, root_path: str,
     for thread in threads:
         thread.join()
 
-def get_version_str(version: Tuple[int, int]) -> str:
-    return f"{version[0]}.{version[1]}"
-
-def process_bpy_version(version: Tuple[int, int]) -> None:
-    print(f"Processing version {version[0]}.{version[1]}")
+def process_bpy_version(version: Version) -> None:
+    print(f"Processing version {version.point_str()}")
 
     current = "NodeInternal"
     parent = "Node"
 
-    root_path = os.path.join(bpy_docs_path, 
-                             f"{get_version_str(version)}/")
+    root_path = os.path.join(bpy_docs_path, f"{version.point_str()}/")
 
     get_subclasses(current, parent, root_path, version)
 
-def generate_versions(max_version: Tuple[int, int]) -> List[Tuple[int, int]]:
+def generate_versions(max_version_inc: Version) -> list[Version]:
     BLENDER_3_MAX_VERSION = 6
 
-    versions = [(3, i) for i in range(0, BLENDER_3_MAX_VERSION + 1)]
-    versions += [(4, i) for i in range(0, max_version[1] + 1)]
+    versions = [Version(3, i) for i in range(0, BLENDER_3_MAX_VERSION + 1)]
+    versions += [Version(4, i) for i in range(0, max_version_inc[1] + 1)]
     
+    #lazy max version check
+    for version in versions[::-1]:
+        if version > max_version_inc:
+            versions.remove(version)
+
     return versions
+
+def subminor(version: Version) -> tuple:
+    return (version[0], version[1], 0)
+
+def get_min_version(versions: list[Version]) -> Version:
+    min_version = min(versions)
+
+    if min_version != NTP_MIN_VERSION:
+        return min_version
+    else:
+        return None
+
+def get_max_version(versions: list[Version], blender_versions: list[Version]
+                   ) -> Version:
+    max_v_inclusive = max(versions)
+    max_v_inclusive_index = blender_versions.index(max_v_inclusive)
+    max_v_exclusive = blender_versions[max_v_inclusive_index + 1]
+
+    if max_v_exclusive != blender_versions[-1]:
+        return max_v_exclusive
+    else:
+        return None
+
+def write_imports(file: TextIOWrapper):
+    file.write("from enum import Enum, auto\n")
+    file.write("from typing import NamedTuple\n")
+    file.write("\n")
+
+def write_st_enum(file: TextIOWrapper):
+    file.write("class ST(Enum):\n")
+    file.write("\t\"\"\"\n\tSettings Types\n\t\"\"\"\n")
+
+    for setting_type in types_utils.ST:
+        file.write(f"\t{setting_type.name} = auto()\n")
+    
+    file.write("\n")
+
+def write_ntp_node_setting_class(file: TextIOWrapper):
+    file.write("class NTPNodeSetting(NamedTuple):\n")
+    file.write("\tname_: str\n")
+    file.write("\tst_: ST\n")
+    file.write(f"\tmin_version_: tuple = {subminor(NTP_MIN_VERSION)}\n")
+    file.write(f"\tmax_version_: tuple = {subminor(NTP_MAX_VERSION_EXC)}\n")
+    file.write("\n")
+
+def write_node_info_class(file: TextIOWrapper):
+    file.write("class NodeInfo():\n")
+    file.write("\tattributes_: list[NTPNodeSetting]\n")
+    file.write(f"\tmin_version_: tuple = {subminor(NTP_MIN_VERSION)}\n")
+    file.write(f"\tmax_version_: tuple = {subminor(NTP_MAX_VERSION_EXC)}\n")
+    file.write("\n")
+
+def write_ntp_node_settings(node_info: NodeInfo, file: TextIOWrapper,
+                            node_min_v: Version, node_max_v: Version):
+    attr_dict = node_info.attributes_
+    file.write("\n\t\t[")
+    attrs_exist = len(attr_dict.items()) > 0
+    if attrs_exist:
+        file.write("\n")
+    sorted_attrs = dict(sorted(attr_dict.items()))
+    for attr, attr_versions in sorted_attrs.items():
+        min_version_str = ""
+        attr_min_version = get_min_version(attr_versions)
+        if attr_min_version != None and attr_min_version != node_min_v:
+            min_version_str = f", min_version={subminor(attr_min_version)}"
+
+        max_version_str = ""
+        attr_max_version = get_max_version(attr_versions, versions)
+        if attr_max_version != None and attr_max_version != node_max_v:
+            max_version_str = f", max_version={subminor(attr_max_version)}"
+
+        file.write(f"\t\t\tNTPNodeSetting(\"{attr.name_}\", ST.{attr.type_.name}"
+                    f"{min_version_str}{max_version_str}),\n")
+
+    if attrs_exist:
+        file.write("\t\t")
+    file.write("]")
+
+def write_node(name: str, node_info: NodeInfo, file: TextIOWrapper):
+    file.write(f"\t\'{name}\' : NodeInfo(")
+
+    node_min_v = get_min_version(node_info.versions_)
+    node_max_v = get_max_version(node_info.versions_, versions)
+
+    write_ntp_node_settings(node_info, file, node_min_v, node_max_v)
+
+    if node_min_v != None:
+        file.write(f",\n\t\tmin_version_ = {subminor(node_min_v)}")
+    if node_max_v != None:
+        file.write(f",\n\t\tmax_version_ = {subminor(node_max_v)}")
+
+    file.write("\n\t),\n\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -183,8 +292,8 @@ if __name__ == "__main__":
     dev_tools_path = os.path.dirname(current_path)
     bpy_docs_path = os.path.join(dev_tools_path, "bpy_docs")
 
-    NTP_MAX_VERSION_INC = (args.max_major_version, args.max_minor_version)
-    max_version_path = os.path.join(bpy_docs_path, f"{get_version_str(NTP_MAX_VERSION_INC)}")
+    NTP_MAX_VERSION_INC = Version(args.max_major_version, args.max_minor_version)
+    max_version_path = os.path.join(bpy_docs_path, f"{NTP_MAX_VERSION_INC.point_str()}")
 
     versions = generate_versions(NTP_MAX_VERSION_INC)
 
@@ -208,37 +317,18 @@ if __name__ == "__main__":
     with open(output_filepath, 'w') as file:
         print(f"Writing settings to {output_filepath}")
 
-        file.write("from .utils import ST, NTPNodeSetting\n\n")
-        file.write("node_settings : dict[str, list[NTPNodeSetting]] = {\n")
+        write_imports(file)
+
+        write_st_enum(file)
+
+        write_ntp_node_setting_class(file)
+       
+        write_node_info_class(file)
+
+        file.write("node_settings : dict[str, NodeInfo] = {\n")
         
-        for node, attr_dict in sorted_nodes.items():
-            file.write(f"\t\'{node}\' : [")
-
-            attrs_exist = len(attr_dict.items()) > 0
-            if attrs_exist:
-                file.write("\n")
-
-            sorted_attrs = dict(sorted(attr_dict.items()))
-            for attr, attr_versions in sorted_attrs.items():
-                attr_min_v = min(attr_versions)
-
-                attr_max_v_inc = max(attr_versions)
-                attr_max_v_inc_idx = versions.index(attr_max_v_inc)
-                attr_max_v_exc = versions[attr_max_v_inc_idx + 1]
-
-                min_version_str = ""
-                if attr_min_v != NTP_MIN_VERSION:
-                    min_version_str = f", min_version=({attr_min_v[0]}, {attr_min_v[1]}, 0)"
-
-                max_version_str = ""
-                if attr_max_v_exc != NTP_MAX_VERSION_EXC:
-                    max_version_str = f", max_version=({attr_max_v_exc[0]}, {attr_max_v_exc[1]}, 0)"
-                file.write(f"\t\tNTPNodeSetting(\"{attr.name_}\", {attr.type_}"
-                           f"{min_version_str}{max_version_str}),\n")
-            
-            if attrs_exist:
-                file.write("\t")
-            file.write("],\n\n")
+        for name, node_info in sorted_nodes.items():
+            write_node(name, node_info, file)
 
         file.write("}")
 
