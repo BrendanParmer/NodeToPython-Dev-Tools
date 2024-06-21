@@ -233,7 +233,7 @@ def write_ntp_node_setting_class(file: TextIOWrapper):
     file.write("\n")
 
 def write_node_info_class(file: TextIOWrapper):
-    file.write("class NodeInfo():\n")
+    file.write("class NodeInfo(NamedTuple):\n")
     file.write("\tattributes_: list[NTPNodeSetting]\n")
     file.write(f"\tmin_version_: tuple = {subminor(NTP_MIN_VERSION)}\n")
     file.write(f"\tmax_version_: tuple = {subminor(NTP_MAX_VERSION_EXC)}\n")
@@ -251,12 +251,12 @@ def write_ntp_node_settings(node_info: NodeInfo, file: TextIOWrapper,
         min_version_str = ""
         attr_min_version = get_min_version(attr_versions)
         if attr_min_version != None and attr_min_version != node_min_v:
-            min_version_str = f", min_version={subminor(attr_min_version)}"
+            min_version_str = f", min_version_={subminor(attr_min_version)}"
 
         max_version_str = ""
         attr_max_version = get_max_version(attr_versions, versions)
         if attr_max_version != None and attr_max_version != node_max_v:
-            max_version_str = f", max_version={subminor(attr_max_version)}"
+            max_version_str = f", max_version_={subminor(attr_max_version)}"
 
         file.write(f"\t\t\tNTPNodeSetting(\"{attr.name_}\", ST.{attr.type_.name}"
                     f"{min_version_str}{max_version_str}),\n")
