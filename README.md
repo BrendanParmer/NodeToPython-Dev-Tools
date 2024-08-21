@@ -1,3 +1,6 @@
+> [!IMPORTANT]
+> **THIS REPOSITORY HAS BEEN ARCHIVED, AND CODE HAS BEEN MOVED INTO THE MAIN [NODE TO PYTHON REPO](https://github.com/BrendanParmer/NodeToPython)**
+
 # NodeToPython-Dev-Tools
 A repository hosting tools to automate and speed up some aspects of development for the Blender add-on [NodeToPython](https://github.com/BrendanParmer/NodeToPython).
 
